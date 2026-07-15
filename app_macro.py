@@ -195,7 +195,14 @@ try:
                 m_entry_price = c_price
                 m_qty = (m_balance * MACRO_TRADE_RATIO * MACRO_LEVERAGE) / c_price
 
-        m_balances.append(m_balance)
+        # 실시간 자산(Equity) 계산
+        m_equity = m_balance
+        if m_position == 'LONG':
+            m_equity += (m_qty * (c_price - m_entry_price)) - (m_qty * c_price * FEE_RATE) - (m_qty * m_entry_price * FEE_RATE)
+        elif m_position == 'SHORT':
+            m_equity += (m_qty * (m_entry_price - c_price)) - (m_qty * c_price * FEE_RATE) - (m_qty * m_entry_price * FEE_RATE)
+            
+        m_balances.append(m_equity)
 
     # (B) 사용자 커스텀 로직 모의투자 실행
     c_balance = 10000.0
@@ -284,22 +291,31 @@ try:
                 c_qty = (c_balance * CUSTOM_TRADE_RATIO * CUSTOM_LEVERAGE) / c_price
                 long_cnt = 0; short_cnt = 0; neutral_streak = 0
 
-        c_balances.append(c_balance)
+        # 실시간 자산(Equity) 계산
+        c_equity = c_balance
+        if c_position == 'LONG':
+            c_equity += (c_qty * (c_price - c_entry_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
+        elif c_position == 'SHORT':
+            c_equity += (c_qty * (c_entry_price - c_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
+            
+        c_balances.append(c_equity)
 
     # --- 3. 결과 시각화 ---
     col1, col2 = st.columns(2)
 
     with col1:
         st.markdown("#### 🌍 매크로 융합 모델 (Macro Pred)")
-        macro_roi = (m_balance - 10000.0) / 10000.0 * 100
-        st.metric("최종 자산 (Simulated)", f"${m_balance:,.2f}", f"{macro_roi:.2f}%")
-        st.metric("현재 포지션", "대기 (None)" if m_position is None else m_position)
+        final_m_equity = m_balances[-1] if m_balances else 10000.0
+        macro_roi = (final_m_equity - 10000.0) / 10000.0 * 100
+        st.metric("실시간 자산 (Real-time Equity)", f"${final_m_equity:,.2f}", f"{macro_roi:.2f}%")
+        st.metric("현재 포지션", "대기 (None)" if m_position is None else f"{m_position} (진입가: ${m_entry_price:,.2f})")
 
     with col2:
         st.markdown("#### 💡 사용자 맞춤 로직 (안전빵 10x)")
-        custom_roi = (c_balance - 10000.0) / 10000.0 * 100
-        st.metric("최종 자산 (Simulated)", f"${c_balance:,.2f}", f"{custom_roi:.2f}%")
-        st.metric("현재 포지션", "대기 (None)" if c_position is None else c_position)
+        final_c_equity = c_balances[-1] if c_balances else 10000.0
+        custom_roi = (final_c_equity - 10000.0) / 10000.0 * 100
+        st.metric("실시간 자산 (Real-time Equity)", f"${final_c_equity:,.2f}", f"{custom_roi:.2f}%")
+        st.metric("현재 포지션", "대기 (None)" if c_position is None else f"{c_position} (진입가: ${c_entry_price:,.2f})")
 
     fig_roi = go.Figure()
     fig_roi.add_trace(go.Scatter(x=sim_df.index, y=m_balances, mode='lines', line=dict(color='gold', width=3), name='Macro Strategy'))
