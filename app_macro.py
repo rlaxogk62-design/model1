@@ -201,7 +201,7 @@ try:
             m_equity += (m_qty * (c_price - m_entry_price)) - (m_qty * c_price * FEE_RATE) - (m_qty * m_entry_price * FEE_RATE)
         elif m_position == 'SHORT':
             m_equity += (m_qty * (m_entry_price - c_price)) - (m_qty * c_price * FEE_RATE) - (m_qty * m_entry_price * FEE_RATE)
-            
+
         m_balances.append(m_equity)
 
     # (B) 사용자 커스텀 로직 모의투자 실행
@@ -224,7 +224,8 @@ try:
         c_price = row['BTC_Close']
         c_high = row['High']
         c_low = row['Low']
-        base_pred = row['Base_Model_Pred']
+        # 커스텀 전략도 AI 예측값(Macro_Pred)을 사용하도록 수정
+        base_pred = row['Macro_Pred']
 
         if base_pred == 1:
             neutral_streak += 1
@@ -297,7 +298,7 @@ try:
             c_equity += (c_qty * (c_price - c_entry_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
         elif c_position == 'SHORT':
             c_equity += (c_qty * (c_entry_price - c_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
-            
+
         c_balances.append(c_equity)
 
     # --- 3. 결과 시각화 ---
@@ -311,7 +312,7 @@ try:
         st.metric("현재 포지션", "대기 (None)" if m_position is None else f"{m_position} (진입가: ${m_entry_price:,.2f})")
 
     with col2:
-        st.markdown("#### 💡 사용자 맞춤 로직 (안전빵 10x)")
+        st.markdown("#### 💡 사용자 맞춤 로직 (AI 예측 + 안전빵 10x)")
         final_c_equity = c_balances[-1] if c_balances else 10000.0
         custom_roi = (final_c_equity - 10000.0) / 10000.0 * 100
         st.metric("실시간 자산 (Real-time Equity)", f"${final_c_equity:,.2f}", f"{custom_roi:.2f}%")
@@ -319,7 +320,7 @@ try:
 
     fig_roi = go.Figure()
     fig_roi.add_trace(go.Scatter(x=sim_df.index, y=m_balances, mode='lines', line=dict(color='gold', width=3), name='Macro Strategy'))
-    fig_roi.add_trace(go.Scatter(x=sim_df.index, y=c_balances, mode='lines', line=dict(color='#00E676', width=3), name='Custom Strategy (Safe)'))
+    fig_roi.add_trace(go.Scatter(x=sim_df.index, y=c_balances, mode='lines', line=dict(color='#00E676', width=3), name='Custom Strategy (AI+Safe)'))
     fig_roi.update_layout(title=f'Dual Mock Trading Equity Curve (Since {start_date} 00:00)', template='plotly_dark', height=400)
     st.plotly_chart(fig_roi, use_container_width=True)
 
