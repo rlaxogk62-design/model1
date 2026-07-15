@@ -30,10 +30,10 @@ st.markdown('<p class="sub-title">Real-time BTC & Macro Indicators + Dual Strate
 st.sidebar.title("⚙️ System Status")
 st.sidebar.markdown("---")
 
-# 차트 표시용 슬라이더 (복구)
+# 차트 표시용 슬라이더
 chart_days = st.sidebar.slider("📊 차트 표시 기간 (일)", min_value=1, max_value=7, value=2)
 
-# 시뮬레이션용 시작일 (기본: 7월 15일)
+# 시뮬레이션용 시작일
 default_start_date = date(datetime.now().year, 7, 15)
 start_date = st.sidebar.date_input("📅 시뮬레이션 시작일", value=default_start_date)
 
@@ -44,7 +44,7 @@ def get_live_macro_data(start_d):
         days = 1
 
     exchange = ccxt.kraken()
-    limit = (days + 2) * 96 # 지표 계산을 위해 며칠 더 여유있게 수집
+    limit = (days + 2) * 96
     ohlcv = exchange.fetch_ohlcv('BTC/USDT', timeframe='15m', limit=limit)
     btc_df = pd.DataFrame(ohlcv, columns=['Datetime', 'Open', 'High', 'Low', 'Close', 'Volume'])
     btc_df['Datetime'] = pd.to_datetime(btc_df['Datetime'], unit='ms')
@@ -101,7 +101,7 @@ try:
 
     df['Macro_Pred'] = model_macro.predict(df[feature_cols])
 
-    # --- 1. 차트 시각화 (슬라이더 기간만큼만 표시) ---
+    # --- 1. 차트 시각화 ---
     chart_points = chart_days * 96
     chart_df = df.iloc[-chart_points:] if len(df) > chart_points else df
 
@@ -130,24 +130,17 @@ try:
     # --- 2. 과거 데이터 기반 모의투자 (Paper Trading) 시뮬레이션 ---
     st.markdown(f"### 💸 Dual Paper Trading Simulation (Since {start_date} 00:00)")
 
-    # 지정한 날짜(7월 15일 0시 등) 이후의 데이터만 시뮬레이션용으로 추출
     sim_start_dt = pd.to_datetime(start_date)
     sim_df = df[df.index >= sim_start_dt]
 
-    # 사용자 요청 최적화 조건 (안전빵)
-    CUSTOM_LEVERAGE = 10
-    CUSTOM_TRADE_RATIO = 0.5
-    CUSTOM_ENTRY_CNT = 1
-    CUSTOM_NEUTRAL_CNT = 5
     FEE_RATE = 0.0004
 
-    # 매크로 파라미터
-    MACRO_LEVERAGE = 6
-    MACRO_TRADE_RATIO = 0.3
-    MACRO_TP_MULT = 3.5
-    MACRO_SL_MULT = 3.0
+    # (A) 매크로 모델 (AI 최적화 결과)
+    MACRO_LEVERAGE = 10
+    MACRO_TRADE_RATIO = 0.2
+    MACRO_TP_MULT = 1.0
+    MACRO_SL_MULT = 1.0
 
-    # (A) 매크로 모델 모의투자 실행
     m_balance = 10000.0
     m_position = None
     m_entry_price = 0.0
@@ -195,25 +188,25 @@ try:
                 m_entry_price = c_price
                 m_qty = (m_balance * MACRO_TRADE_RATIO * MACRO_LEVERAGE) / c_price
 
-        # 실시간 자산(Equity) 계산
+        # 실시간 자산 계산
         m_equity = m_balance
         if m_position == 'LONG':
             m_equity += (m_qty * (c_price - m_entry_price)) - (m_qty * c_price * FEE_RATE) - (m_qty * m_entry_price * FEE_RATE)
         elif m_position == 'SHORT':
             m_equity += (m_qty * (m_entry_price - c_price)) - (m_qty * c_price * FEE_RATE) - (m_qty * m_entry_price * FEE_RATE)
-
         m_balances.append(m_equity)
 
-    # (B) 사용자 커스텀 로직 모의투자 실행
+    # (B) 사용자 커스텀 로직 (스위칭 & 횡보 10회 청산)
+    CUSTOM_LEVERAGE = 10
+    CUSTOM_TRADE_RATIO = 0.2
+    CUSTOM_NEUTRAL_LIMIT = 10
+
     c_balance = 10000.0
     c_position = None
     c_entry_price = 0.0
     c_qty = 0.0
     c_balances = []
-
-    long_cnt = 0
-    short_cnt = 0
-    neutral_streak = 0
+    neutral_count = 0
 
     for i in range(len(sim_df)):
         if c_balance <= 100:
@@ -224,103 +217,94 @@ try:
         c_price = row['BTC_Close']
         c_high = row['High']
         c_low = row['Low']
-        # 커스텀 전략도 AI 예측값(Macro_Pred)을 사용하도록 수정
-        base_pred = row['Macro_Pred']
+        c_pred = row['Macro_Pred']
 
-        if base_pred == 1:
-            neutral_streak += 1
-            long_cnt = 0
-            short_cnt = 0
-        elif base_pred == 2:
-            long_cnt += 1
-            short_cnt = 0
-            neutral_streak = 0
-        elif base_pred == 0:
-            short_cnt += 1
-            long_cnt = 0
-            neutral_streak = 0
+        # 횡보 카운트 업데이트
+        if c_pred == 1:
+            neutral_count += 1
+        else:
+            neutral_count = 0
 
+        # 기존 포지션 관리
         if c_position == 'LONG':
             liq_price = c_entry_price * (1 - 1/CUSTOM_LEVERAGE)
             if c_low <= liq_price:
                 c_balance -= (c_entry_price * c_qty / CUSTOM_LEVERAGE)
                 c_position = None
-                long_cnt = 0; short_cnt = 0; neutral_streak = 0
-            else:
-                if neutral_streak >= CUSTOM_NEUTRAL_CNT:
-                    profit = (c_qty * (c_price - c_entry_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
-                    c_balance += profit
-                    c_position = None
-                    long_cnt = 0; short_cnt = 0; neutral_streak = 0
-                elif short_cnt >= CUSTOM_ENTRY_CNT:
-                    profit = (c_qty * (c_price - c_entry_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
-                    c_balance += profit
-                    c_position = 'SHORT'
-                    c_entry_price = c_price
-                    c_qty = (c_balance * CUSTOM_TRADE_RATIO * CUSTOM_LEVERAGE) / c_price
-                    long_cnt = 0; short_cnt = 0; neutral_streak = 0
+                neutral_count = 0
+            elif neutral_count >= CUSTOM_NEUTRAL_LIMIT:
+                # 횡보 10연속 강제 청산
+                profit = (c_qty * (c_price - c_entry_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
+                c_balance += profit
+                c_position = None
+                neutral_count = 0
+            elif c_pred == 0:
+                # 스위칭 (Long -> Short)
+                profit = (c_qty * (c_price - c_entry_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
+                c_balance += profit
+                c_position = 'SHORT'
+                c_entry_price = c_price
+                c_qty = (c_balance * CUSTOM_TRADE_RATIO * CUSTOM_LEVERAGE) / c_price
 
         elif c_position == 'SHORT':
             liq_price = c_entry_price * (1 + 1/CUSTOM_LEVERAGE)
             if c_high >= liq_price:
                 c_balance -= (c_entry_price * c_qty / CUSTOM_LEVERAGE)
                 c_position = None
-                long_cnt = 0; short_cnt = 0; neutral_streak = 0
-            else:
-                if neutral_streak >= CUSTOM_NEUTRAL_CNT:
-                    profit = (c_qty * (c_entry_price - c_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
-                    c_balance += profit
-                    c_position = None
-                    long_cnt = 0; short_cnt = 0; neutral_streak = 0
-                elif long_cnt >= CUSTOM_ENTRY_CNT:
-                    profit = (c_qty * (c_entry_price - c_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
-                    c_balance += profit
-                    c_position = 'LONG'
-                    c_entry_price = c_price
-                    c_qty = (c_balance * CUSTOM_TRADE_RATIO * CUSTOM_LEVERAGE) / c_price
-                    long_cnt = 0; short_cnt = 0; neutral_streak = 0
-
-        if c_position is None:
-            if long_cnt >= CUSTOM_ENTRY_CNT:
+                neutral_count = 0
+            elif neutral_count >= CUSTOM_NEUTRAL_LIMIT:
+                # 횡보 10연속 강제 청산
+                profit = (c_qty * (c_entry_price - c_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
+                c_balance += profit
+                c_position = None
+                neutral_count = 0
+            elif c_pred == 2:
+                # 스위칭 (Short -> Long)
+                profit = (c_qty * (c_entry_price - c_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
+                c_balance += profit
                 c_position = 'LONG'
                 c_entry_price = c_price
                 c_qty = (c_balance * CUSTOM_TRADE_RATIO * CUSTOM_LEVERAGE) / c_price
-                long_cnt = 0; short_cnt = 0; neutral_streak = 0
-            elif short_cnt >= CUSTOM_ENTRY_CNT:
+
+        # 신규 진입 (포지션 없을 때)
+        if c_position is None:
+            if c_pred == 2:
+                c_position = 'LONG'
+                c_entry_price = c_price
+                c_qty = (c_balance * CUSTOM_TRADE_RATIO * CUSTOM_LEVERAGE) / c_price
+            elif c_pred == 0:
                 c_position = 'SHORT'
                 c_entry_price = c_price
                 c_qty = (c_balance * CUSTOM_TRADE_RATIO * CUSTOM_LEVERAGE) / c_price
-                long_cnt = 0; short_cnt = 0; neutral_streak = 0
 
-        # 실시간 자산(Equity) 계산
+        # 실시간 자산 계산
         c_equity = c_balance
         if c_position == 'LONG':
             c_equity += (c_qty * (c_price - c_entry_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
         elif c_position == 'SHORT':
             c_equity += (c_qty * (c_entry_price - c_price)) - (c_qty * c_price * FEE_RATE) - (c_qty * c_entry_price * FEE_RATE)
-
         c_balances.append(c_equity)
 
     # --- 3. 결과 시각화 ---
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("#### 🌍 매크로 융합 모델 (Macro Pred)")
+        st.markdown("#### 🌍 매크로 모델 (TP/SL 1.0, 10x, 20%)")
         final_m_equity = m_balances[-1] if m_balances else 10000.0
         macro_roi = (final_m_equity - 10000.0) / 10000.0 * 100
         st.metric("실시간 자산 (Real-time Equity)", f"${final_m_equity:,.2f}", f"{macro_roi:.2f}%")
         st.metric("현재 포지션", "대기 (None)" if m_position is None else f"{m_position} (진입가: ${m_entry_price:,.2f})")
 
     with col2:
-        st.markdown("#### 💡 사용자 맞춤 로직 (AI 예측 + 안전빵 10x)")
+        st.markdown("#### 💡 사용자 맞춤 로직 (스위칭 & 횡보 10회 청산)")
         final_c_equity = c_balances[-1] if c_balances else 10000.0
         custom_roi = (final_c_equity - 10000.0) / 10000.0 * 100
         st.metric("실시간 자산 (Real-time Equity)", f"${final_c_equity:,.2f}", f"{custom_roi:.2f}%")
         st.metric("현재 포지션", "대기 (None)" if c_position is None else f"{c_position} (진입가: ${c_entry_price:,.2f})")
 
     fig_roi = go.Figure()
-    fig_roi.add_trace(go.Scatter(x=sim_df.index, y=m_balances, mode='lines', line=dict(color='gold', width=3), name='Macro Strategy'))
-    fig_roi.add_trace(go.Scatter(x=sim_df.index, y=c_balances, mode='lines', line=dict(color='#00E676', width=3), name='Custom Strategy (AI+Safe)'))
+    fig_roi.add_trace(go.Scatter(x=sim_df.index, y=m_balances, mode='lines', line=dict(color='gold', width=3), name='Macro Strategy (TP/SL 1.0)'))
+    fig_roi.add_trace(go.Scatter(x=sim_df.index, y=c_balances, mode='lines', line=dict(color='#00E676', width=3), name='Custom Strategy (Switching)'))
     fig_roi.update_layout(title=f'Dual Mock Trading Equity Curve (Since {start_date} 00:00)', template='plotly_dark', height=400)
     st.plotly_chart(fig_roi, use_container_width=True)
 
