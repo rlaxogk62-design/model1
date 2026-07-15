@@ -108,64 +108,79 @@ try:
     fig.add_trace(go.Scatter(x=pred_down.index, y=pred_down['High'] * 1.005,
                              mode='markers', marker=dict(symbol='triangle-down', size=16, color='magenta', line=dict(width=2, color='white')), name='🔴 Macro Short'))
 
-    fig.update_layout(title='Live Macro Signals (Last 5 Days)', template='plotly_dark', xaxis_rangeslider_visible=False, height=500)
-    st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(
+        title='Live Macro Signals (Last 5 Days)', 
+        template='plotly_dark', 
+        xaxis_rangeslider_visible=False, 
+        height=500,
+        uirevision='live_chart',  # 새로고침 시 줌/패닝 상태 유지
+        dragmode='pan'            # 기본 드래그 모드를 Pan(이동)으로 설정
+    )
+    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': False})
 
-    # --- 2. 실시간 모의투자 (Paper Trading) 시뮬레이션 ---
-    st.markdown("### 💸 Live Paper Trading Simulation (최근 5일 진행형 모의투자)")
+    # --- 2. 실시간 모의투자 (Paper Trading) 시뮬레이션 (지금부터 시작) ---
+    st.markdown("### 💸 Live Paper Trading Simulation (현재 시점부터 진행)")
 
-    # 최적화 파라미터 적용 (이전 Optuna 결과 기반)
+    if 'paper_balance' not in st.session_state:
+        st.session_state.paper_balance = 10000.0
+        st.session_state.paper_position = None
+        st.session_state.paper_entry_price = 0.0
+        st.session_state.paper_qty = 0.0
+        st.session_state.paper_history_dates = []
+        st.session_state.paper_history_balances = []
+
+    # 최적화 파라미터 적용
     LEVERAGE = 11
     TP_MULT = 5.0
     SL_MULT = 1.0
     TRADE_RATIO = 0.1
     FEE_RATE = 0.0004
 
-    balance = 10000.0
-    position = None
-    entry_price = 0
-    qty = 0
+    # 현재 실시간(마지막) 캔들 데이터
+    current_row = df.iloc[-1]
+    current_price = current_row['BTC_Close']
+    atr = current_row['ATR_Approx']
+    current_pred = current_row['Macro_Pred']
+    now_time = pd.Timestamp.now()
 
-    history_dates = []
-    history_balances = []
+    # 청산 로직 확인
+    if st.session_state.paper_position == 'LONG':
+        if current_price >= st.session_state.paper_entry_price + (atr * TP_MULT) or current_price <= st.session_state.paper_entry_price - (atr * SL_MULT):
+            profit = (st.session_state.paper_qty * st.session_state.paper_entry_price * ((current_price - st.session_state.paper_entry_price) / st.session_state.paper_entry_price * LEVERAGE)) - (st.session_state.paper_qty * st.session_state.paper_entry_price * FEE_RATE * 2)
+            st.session_state.paper_balance += profit
+            st.session_state.paper_position = None
+    elif st.session_state.paper_position == 'SHORT':
+        if current_price <= st.session_state.paper_entry_price - (atr * TP_MULT) or current_price >= st.session_state.paper_entry_price + (atr * SL_MULT):
+            profit = (st.session_state.paper_qty * st.session_state.paper_entry_price * ((st.session_state.paper_entry_price - current_price) / st.session_state.paper_entry_price * LEVERAGE)) - (st.session_state.paper_qty * st.session_state.paper_entry_price * FEE_RATE * 2)
+            st.session_state.paper_balance += profit
+            st.session_state.paper_position = None
 
-    for i in range(len(df)):
-        row = df.iloc[i]
-        current_price = row['BTC_Close']
-        atr = row['ATR_Approx']
+    # 신규 진입 로직
+    if st.session_state.paper_position is None:
+        if current_pred == 2:
+            st.session_state.paper_position = 'LONG'
+            st.session_state.paper_entry_price = current_price
+            st.session_state.paper_qty = (st.session_state.paper_balance * TRADE_RATIO) / current_price * LEVERAGE
+        elif current_pred == 0:
+            st.session_state.paper_position = 'SHORT'
+            st.session_state.paper_entry_price = current_price
+            st.session_state.paper_qty = (st.session_state.paper_balance * TRADE_RATIO) / current_price * LEVERAGE
 
-        if position == 'LONG':
-            if current_price >= entry_price + (atr * TP_MULT) or current_price <= entry_price - (atr * SL_MULT):
-                profit = (qty * entry_price * ((current_price - entry_price) / entry_price * LEVERAGE)) - (qty * entry_price * FEE_RATE * 2)
-                balance += profit
-                position = None
-        elif position == 'SHORT':
-            if current_price <= entry_price - (atr * TP_MULT) or current_price >= entry_price + (atr * SL_MULT):
-                profit = (qty * entry_price * ((entry_price - current_price) / entry_price * LEVERAGE)) - (qty * entry_price * FEE_RATE * 2)
-                balance += profit
-                position = None
-
-        if position is None:
-            if row['Macro_Pred'] == 2:
-                position = 'LONG'
-                entry_price = current_price
-                qty = (balance * TRADE_RATIO) / entry_price * LEVERAGE
-            elif row['Macro_Pred'] == 0:
-                position = 'SHORT'
-                entry_price = current_price
-                qty = (balance * TRADE_RATIO) / entry_price * LEVERAGE
-
-        history_dates.append(df.index[i])
-        history_balances.append(balance)
+    # 기록 저장 (최대 1000개 유지)
+    st.session_state.paper_history_dates.append(now_time)
+    st.session_state.paper_history_balances.append(st.session_state.paper_balance)
+    if len(st.session_state.paper_history_dates) > 1000:
+        st.session_state.paper_history_dates = st.session_state.paper_history_dates[-1000:]
+        st.session_state.paper_history_balances = st.session_state.paper_history_balances[-1000:]
 
     col1, col2, col3 = st.columns(3)
-    current_roi = (balance - 10000.0) / 10000.0 * 100
+    current_roi = (st.session_state.paper_balance - 10000.0) / 10000.0 * 100
     col1.metric("초기 모의 자산", "$10,000.00")
-    col2.metric("현재 모의 자산", f"${balance:,.2f}", f"{current_roi:.2f}%")
-    col3.metric("현재 포지션 상태", "대기 (None)" if position is None else position)
+    col2.metric("현재 모의 자산 (Live)", f"${st.session_state.paper_balance:,.2f}", f"{current_roi:.2f}%")
+    col3.metric("현재 포지션 상태", "대기 (None)" if st.session_state.paper_position is None else st.session_state.paper_position)
 
-    fig_roi = go.Figure(data=[go.Scatter(x=history_dates, y=history_balances, mode='lines', line=dict(color='gold', width=3))])
-    fig_roi.update_layout(title='Mock Trading Equity Curve (Real-time Updated)', template='plotly_dark', height=300)
+    fig_roi = go.Figure(data=[go.Scatter(x=st.session_state.paper_history_dates, y=st.session_state.paper_history_balances, mode='lines', line=dict(color='gold', width=3))])
+    fig_roi.update_layout(title='Mock Trading Equity Curve (Starts Now)', template='plotly_dark', height=300)
     st.plotly_chart(fig_roi, use_container_width=True)
 
 except Exception as e:
