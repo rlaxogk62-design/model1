@@ -37,6 +37,10 @@ chart_days = st.sidebar.slider("📊 차트 표시 기간 (일)", min_value=1, m
 default_start_date = date(datetime.now().year, 7, 15)
 start_date = st.sidebar.date_input("📅 시뮬레이션 시작일", value=default_start_date)
 
+# 신뢰도 임계값 설정 (남발 방지)
+conf_threshold = st.sidebar.slider("🎯 AI 예측 확신도 임계값 (Confidence Threshold)", min_value=0.33, max_value=0.90, value=0.45, step=0.01)
+st.sidebar.caption("기본값 0.45: AI가 45% 이상 확신할 때만 시그널 발생 (값이 높을수록 신중해짐)")
+
 @st.cache_data(ttl=50)
 def get_live_macro_data(start_d):
     days = (datetime.now().date() - start_d).days
@@ -99,7 +103,21 @@ try:
                     'OIL_Ret_15m', 'OIL_Ret_1H', 'OIL_Ret_4H',
                     'TREASURY_Ret_15m', 'TREASURY_Ret_1H', 'TREASURY_Ret_4H']
 
-    df['Macro_Pred'] = model_macro.predict(df[feature_cols])
+    # predict_proba를 사용하여 확률값 계산
+    probs = model_macro.predict_proba(df[feature_cols])
+    
+    # 임계값을 적용하여 0, 1, 2 결정
+    # 클래스 0: 하락, 1: 횡보, 2: 상승
+    preds = []
+    for p in probs:
+        if p[2] >= conf_threshold: # 상승 확률이 임계값 이상이면 Long
+            preds.append(2)
+        elif p[0] >= conf_threshold: # 하락 확률이 임계값 이상이면 Short
+            preds.append(0)
+        else:
+            preds.append(1) # 그 외는 관망(횡보)
+            
+    df['Macro_Pred'] = preds
 
     # --- 1. 차트 시각화 ---
     chart_points = chart_days * 96
@@ -118,7 +136,7 @@ try:
                              mode='markers', marker=dict(symbol='triangle-down', size=16, color='magenta', line=dict(width=2, color='white')), name='🔴 Macro Short'))
 
     fig.update_layout(
-        title=f'Live Macro Signals (Last {chart_days} Days)',
+        title=f'Live Macro Signals (Last {chart_days} Days) | Threshold: {conf_threshold}',
         template='plotly_dark',
         xaxis_rangeslider_visible=False,
         height=500,
@@ -289,7 +307,7 @@ try:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("#### 🌍 매크로 모델 (TP/SL 1.0, 10x, 20%)")
+        st.markdown(f"#### 🌍 매크로 모델 (Threshold {conf_threshold})")
         final_m_equity = m_balances[-1] if m_balances else 10000.0
         macro_roi = (final_m_equity - 10000.0) / 10000.0 * 100
         st.metric("실시간 자산 (Real-time Equity)", f"${final_m_equity:,.2f}", f"{macro_roi:.2f}%")
