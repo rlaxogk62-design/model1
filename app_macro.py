@@ -27,6 +27,10 @@ st.markdown("""
 st.markdown('<p class="main-title">🌍 Macro Fusion Pro Tracker</p>', unsafe_allow_html=True)
 st.markdown('<p class="sub-title">Real-time BTC & Macro Indicators (NASDAQ, DXY, WTI, Yield) + Live Paper Trading</p>', unsafe_allow_html=True)
 
+st.sidebar.title("⚙️ System Status")
+st.sidebar.markdown("---")
+chart_days = st.sidebar.slider("📊 차트 표시 기간 (일)", min_value=1, max_value=30, value=5)
+
 @st.cache_data(ttl=50) # 50초 캐싱
 def get_live_macro_data(days=5):
     # 1. BTC 데이터 수집 (Kraken)
@@ -79,7 +83,7 @@ def get_live_macro_data(days=5):
 
 try:
     # 데이터 로드
-    df = get_live_macro_data(days=5)
+    df = get_live_macro_data(days=chart_days)
 
     # 모델 로드 및 추론
     model_path = './data/model/xgboost_macro_15m.pkl'
@@ -109,9 +113,9 @@ try:
                              mode='markers', marker=dict(symbol='triangle-down', size=16, color='magenta', line=dict(width=2, color='white')), name='🔴 Macro Short'))
 
     fig.update_layout(
-        title='Live Macro Signals (Last 5 Days)', 
-        template='plotly_dark', 
-        xaxis_rangeslider_visible=False, 
+        title=f'Live Macro Signals (Last {chart_days} Days)',
+        template='plotly_dark',
+        xaxis_rangeslider_visible=False,
         height=500,
         uirevision='live_chart',  # 새로고침 시 줌/패닝 상태 유지
         dragmode='pan'            # 기본 드래그 모드를 Pan(이동)으로 설정
