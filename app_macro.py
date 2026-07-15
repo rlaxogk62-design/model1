@@ -6,7 +6,7 @@ import numpy as np
 import joblib
 import plotly.graph_objects as go
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from streamlit_autorefresh import st_autorefresh
 import os
 
@@ -29,10 +29,18 @@ st.markdown('<p class="sub-title">Real-time BTC & Macro Indicators + Dual Strate
 
 st.sidebar.title("⚙️ System Status")
 st.sidebar.markdown("---")
-chart_days = st.sidebar.slider("📊 차트 표시 기간 (일)", min_value=1, max_value=30, value=5)
+
+# 시작일 선택 위젯 추가 (기본값: 올해 7월 15일)
+default_start_date = date(datetime.now().year, 7, 15)
+start_date = st.sidebar.date_input("📅 시뮬레이션 시작일", value=default_start_date)
 
 @st.cache_data(ttl=50)
-def get_live_macro_data(days=5):
+def get_live_macro_data(start_d):
+    # 현재 날짜와의 차이(일수) 계산
+    days = (datetime.now().date() - start_d).days
+    if days <= 0:
+        days = 1 # 최소 1일
+        
     # 1. BTC 데이터 수집 (Kraken)
     exchange = ccxt.kraken()
     limit = days * 96
@@ -83,7 +91,8 @@ def get_live_macro_data(days=5):
 
 try:
     # 데이터 로드
-    df = get_live_macro_data(days=chart_days)
+    df = get_live_macro_data(start_date)
+    chart_days = (datetime.now().date() - start_date).days
 
     # 모델 로드 및 추론
     model_path = './data/model/xgboost_macro_15m.pkl'
@@ -113,7 +122,7 @@ try:
                              mode='markers', marker=dict(symbol='triangle-down', size=16, color='magenta', line=dict(width=2, color='white')), name='🔴 Macro Short'))
 
     fig.update_layout(
-        title=f'Live Macro Signals (Last {chart_days} Days)',
+        title=f'Live Macro Signals (Since {start_date})',
         template='plotly_dark',
         xaxis_rangeslider_visible=False,
         height=500,
@@ -122,8 +131,8 @@ try:
     )
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': False})
 
-    # --- 2. 과거 데이터 기반 모의투자 (Paper Trading) 시뮬레이션 --- 
-    st.markdown(f"### 💸 Dual Paper Trading Simulation (Last {chart_days} Days)")
+    # --- 2. 과거 데이터 기반 모의투자 (Paper Trading) 시뮬레이션 ---
+    st.markdown(f"### 💸 Dual Paper Trading Simulation (Since {start_date})")
 
     # --- 공통 파라미터 ---
     # 사용자 요청 최적화 조건 반영 (안전빵)
@@ -150,7 +159,7 @@ try:
         if m_balance <= 100:
             m_balances.append(m_balance)
             continue
-        
+
         row = df.iloc[i]
         c_price = row['BTC_Close']
         c_high = row['High']
@@ -186,7 +195,7 @@ try:
                 m_position = 'SHORT'
                 m_entry_price = c_price
                 m_qty = (m_balance * MACRO_TRADE_RATIO * MACRO_LEVERAGE) / c_price
-                
+
         m_balances.append(m_balance)
 
     # --- (B) 사용자 커스텀 로직 (안전빵) 모의투자 실행 ---
@@ -195,7 +204,7 @@ try:
     c_entry_price = 0.0
     c_qty = 0.0
     c_balances = []
-    
+
     long_cnt = 0
     short_cnt = 0
     neutral_streak = 0
@@ -275,7 +284,7 @@ try:
                 c_entry_price = c_price
                 c_qty = (c_balance * CUSTOM_TRADE_RATIO * CUSTOM_LEVERAGE) / c_price
                 long_cnt = 0; short_cnt = 0; neutral_streak = 0
-                
+
         c_balances.append(c_balance)
 
     # -----------------------------------------------------
@@ -298,7 +307,7 @@ try:
     fig_roi = go.Figure()
     fig_roi.add_trace(go.Scatter(x=df.index, y=m_balances, mode='lines', line=dict(color='gold', width=3), name='Macro Strategy'))
     fig_roi.add_trace(go.Scatter(x=df.index, y=c_balances, mode='lines', line=dict(color='#00E676', width=3), name='Custom Strategy (Safe)'))
-    fig_roi.update_layout(title=f'Dual Mock Trading Equity Curve (Over Last {chart_days} Days)', template='plotly_dark', height=400)
+    fig_roi.update_layout(title=f'Dual Mock Trading Equity Curve (Since {start_date})', template='plotly_dark', height=400)
     st.plotly_chart(fig_roi, use_container_width=True)
 
 except Exception as e:
