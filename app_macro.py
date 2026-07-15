@@ -147,8 +147,8 @@ try:
         st.session_state.custom_neutral_streak = 0
 
     # --- 공통 파라미터 ---
-    LEVERAGE = 10
-    TRADE_RATIO = 0.1
+    LEVERAGE = 19       # 사용자 최적화 결과 반영
+    TRADE_RATIO = 0.5   # 50% 시드 비중
     FEE_RATE = 0.0004
     # 매크로 최적화 파라미터
     MACRO_TP_MULT = 3.5
@@ -199,7 +199,7 @@ try:
                 st.session_state.macro_qty = (st.session_state.macro_balance * TRADE_RATIO * LEVERAGE) / current_price
 
     # -----------------------------------------------------
-    # (B) 사용자 커스텀 로직 매매 로직
+    # (B) 사용자 커스텀 로직 매매 로직 (최적화 파라미터 적용)
     # -----------------------------------------------------
     if st.session_state.custom_balance > 100:
         if current_base_pred == 1:
@@ -219,12 +219,14 @@ try:
                 st.session_state.custom_position = None
                 st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
             else:
+                # 최적화된 횡보 10회 청산
                 if st.session_state.custom_neutral_streak >= 10:
                     profit = (st.session_state.custom_qty * (current_price - st.session_state.custom_entry_price)) - (st.session_state.custom_qty * current_price * FEE_RATE) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE)
                     st.session_state.custom_balance += profit
                     st.session_state.custom_position = None
                     st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
-                elif st.session_state.custom_short_count >= 2:
+                # 최적화된 스위칭 1회 신호
+                elif st.session_state.custom_short_count >= 1:
                     profit = (st.session_state.custom_qty * (current_price - st.session_state.custom_entry_price)) - (st.session_state.custom_qty * current_price * FEE_RATE) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE)
                     st.session_state.custom_balance += profit
                     st.session_state.custom_position = 'SHORT'
@@ -239,12 +241,14 @@ try:
                 st.session_state.custom_position = None
                 st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
             else:
+                # 최적화된 횡보 10회 청산
                 if st.session_state.custom_neutral_streak >= 10:
                     profit = (st.session_state.custom_qty * (st.session_state.custom_entry_price - current_price)) - (st.session_state.custom_qty * current_price * FEE_RATE) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE)
                     st.session_state.custom_balance += profit
                     st.session_state.custom_position = None
                     st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
-                elif st.session_state.custom_long_count >= 2:
+                # 최적화된 스위칭 1회 신호
+                elif st.session_state.custom_long_count >= 1:
                     profit = (st.session_state.custom_qty * (st.session_state.custom_entry_price - current_price)) - (st.session_state.custom_qty * current_price * FEE_RATE) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE)
                     st.session_state.custom_balance += profit
                     st.session_state.custom_position = 'LONG'
@@ -253,12 +257,13 @@ try:
                     st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
 
         if st.session_state.custom_position is None:
-            if st.session_state.custom_long_count >= 2:
+            # 최적화된 진입 1회 신호
+            if st.session_state.custom_long_count >= 1:
                 st.session_state.custom_position = 'LONG'
                 st.session_state.custom_entry_price = current_price
                 st.session_state.custom_qty = (st.session_state.custom_balance * TRADE_RATIO * LEVERAGE) / current_price
                 st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
-            elif st.session_state.custom_short_count >= 2:
+            elif st.session_state.custom_short_count >= 1:
                 st.session_state.custom_position = 'SHORT'
                 st.session_state.custom_entry_price = current_price
                 st.session_state.custom_qty = (st.session_state.custom_balance * TRADE_RATIO * LEVERAGE) / current_price
@@ -285,14 +290,14 @@ try:
         st.metric("포지션", "대기 (None)" if st.session_state.macro_position is None else st.session_state.macro_position)
 
     with col2:
-        st.markdown("#### 💡 사용자 맞춤 로직 (Base Pred)")
+        st.markdown("#### 💡 사용자 맞춤 로직 (Opt. 19x)")
         custom_roi = (st.session_state.custom_balance - 10000.0) / 10000.0 * 100
         st.metric("자산 (Live)", f"${st.session_state.custom_balance:,.2f}", f"{custom_roi:.2f}%")
         st.metric("포지션", "대기 (None)" if st.session_state.custom_position is None else st.session_state.custom_position)
 
     fig_roi = go.Figure()
     fig_roi.add_trace(go.Scatter(x=st.session_state.history_dates, y=st.session_state.macro_history_balances, mode='lines', line=dict(color='gold', width=3), name='Macro Strategy'))
-    fig_roi.add_trace(go.Scatter(x=st.session_state.history_dates, y=st.session_state.custom_history_balances, mode='lines', line=dict(color='#00E676', width=3), name='Custom Strategy'))
+    fig_roi.add_trace(go.Scatter(x=st.session_state.history_dates, y=st.session_state.custom_history_balances, mode='lines', line=dict(color='#00E676', width=3), name='Optimized Custom Strategy'))
     fig_roi.update_layout(title='Dual Mock Trading Equity Curve (Starts Now)', template='plotly_dark', height=300)
     st.plotly_chart(fig_roi, use_container_width=True)
 
