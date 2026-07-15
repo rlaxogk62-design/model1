@@ -123,7 +123,7 @@ try:
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': False})
 
     # --- 2. 실시간 모의투자 (Paper Trading) 시뮬레이션 ---
-    st.markdown("### 💸 Dual Live Paper Trading Simulation (현재 시점부터 진행)")
+    st.markdown("### 💸 Dual Live Paper Trading Simulation (현실적 레버리지 반영)")
 
     # (A) 매크로 모델 상태 초기화
     if 'macro_balance' not in st.session_state:
@@ -157,6 +157,8 @@ try:
     # 현재 실시간 데이터
     current_row = df.iloc[-1]
     current_price = current_row['BTC_Close']
+    current_high = current_row['High']
+    current_low = current_row['Low']
     atr = current_row['ATR_Approx']
     current_macro_pred = current_row['Macro_Pred']
     current_base_pred = current_row['Base_Model_Pred']
@@ -165,79 +167,102 @@ try:
     # -----------------------------------------------------
     # (A) 매크로 모델 매매 로직
     # -----------------------------------------------------
-    if st.session_state.macro_position == 'LONG':
-        if current_price >= st.session_state.macro_entry_price + (atr * MACRO_TP_MULT) or current_price <= st.session_state.macro_entry_price - (atr * MACRO_SL_MULT):
-            profit = (st.session_state.macro_qty * st.session_state.macro_entry_price * ((current_price - st.session_state.macro_entry_price) / st.session_state.macro_entry_price * LEVERAGE)) - (st.session_state.macro_qty * st.session_state.macro_entry_price * FEE_RATE * 2)
-            st.session_state.macro_balance += profit
-            st.session_state.macro_position = None
-    elif st.session_state.macro_position == 'SHORT':
-        if current_price <= st.session_state.macro_entry_price - (atr * MACRO_TP_MULT) or current_price >= st.session_state.macro_entry_price + (atr * MACRO_SL_MULT):
-            profit = (st.session_state.macro_qty * st.session_state.macro_entry_price * ((st.session_state.macro_entry_price - current_price) / st.session_state.macro_entry_price * LEVERAGE)) - (st.session_state.macro_qty * st.session_state.macro_entry_price * FEE_RATE * 2)
-            st.session_state.macro_balance += profit
-            st.session_state.macro_position = None
+    if st.session_state.macro_balance > 100:
+        if st.session_state.macro_position == 'LONG':
+            liq_price = st.session_state.macro_entry_price * (1 - 1/LEVERAGE)
+            if current_low <= liq_price:
+                st.session_state.macro_balance -= (st.session_state.macro_entry_price * st.session_state.macro_qty / LEVERAGE)
+                st.session_state.macro_position = None
+            elif current_high >= st.session_state.macro_entry_price + (atr * MACRO_TP_MULT) or current_low <= st.session_state.macro_entry_price - (atr * MACRO_SL_MULT):
+                profit = (st.session_state.macro_qty * (current_price - st.session_state.macro_entry_price)) - (st.session_state.macro_qty * current_price * FEE_RATE) - (st.session_state.macro_qty * st.session_state.macro_entry_price * FEE_RATE)
+                st.session_state.macro_balance += profit
+                st.session_state.macro_position = None
 
-    if st.session_state.macro_position is None:
-        if current_macro_pred == 2:
-            st.session_state.macro_position = 'LONG'
-            st.session_state.macro_entry_price = current_price
-            st.session_state.macro_qty = (st.session_state.macro_balance * TRADE_RATIO) / current_price * LEVERAGE
-        elif current_macro_pred == 0:
-            st.session_state.macro_position = 'SHORT'
-            st.session_state.macro_entry_price = current_price
-            st.session_state.macro_qty = (st.session_state.macro_balance * TRADE_RATIO) / current_price * LEVERAGE
+        elif st.session_state.macro_position == 'SHORT':
+            liq_price = st.session_state.macro_entry_price * (1 + 1/LEVERAGE)
+            if current_high >= liq_price:
+                st.session_state.macro_balance -= (st.session_state.macro_entry_price * st.session_state.macro_qty / LEVERAGE)
+                st.session_state.macro_position = None
+            elif current_low <= st.session_state.macro_entry_price - (atr * MACRO_TP_MULT) or current_high >= st.session_state.macro_entry_price + (atr * MACRO_SL_MULT):
+                profit = (st.session_state.macro_qty * (st.session_state.macro_entry_price - current_price)) - (st.session_state.macro_qty * current_price * FEE_RATE) - (st.session_state.macro_qty * st.session_state.macro_entry_price * FEE_RATE)
+                st.session_state.macro_balance += profit
+                st.session_state.macro_position = None
+
+        if st.session_state.macro_position is None:
+            if current_macro_pred == 2:
+                st.session_state.macro_position = 'LONG'
+                st.session_state.macro_entry_price = current_price
+                st.session_state.macro_qty = (st.session_state.macro_balance * TRADE_RATIO * LEVERAGE) / current_price
+            elif current_macro_pred == 0:
+                st.session_state.macro_position = 'SHORT'
+                st.session_state.macro_entry_price = current_price
+                st.session_state.macro_qty = (st.session_state.macro_balance * TRADE_RATIO * LEVERAGE) / current_price
 
     # -----------------------------------------------------
     # (B) 사용자 커스텀 로직 매매 로직
     # -----------------------------------------------------
-    if current_base_pred == 1:
-        st.session_state.custom_neutral_streak += 1
-    else:
-        st.session_state.custom_neutral_streak = 0
+    if st.session_state.custom_balance > 100:
+        if current_base_pred == 1:
+            st.session_state.custom_neutral_streak += 1
+        else:
+            st.session_state.custom_neutral_streak = 0
 
-    if current_base_pred == 2:
-        st.session_state.custom_long_count += 1
-    elif current_base_pred == 0:
-        st.session_state.custom_short_count += 1
+        if current_base_pred == 2:
+            st.session_state.custom_long_count += 1
+        elif current_base_pred == 0:
+            st.session_state.custom_short_count += 1
 
-    if st.session_state.custom_position == 'LONG':
-        if st.session_state.custom_neutral_streak >= 10:
-            profit = (st.session_state.custom_qty * st.session_state.custom_entry_price * ((current_price - st.session_state.custom_entry_price) / st.session_state.custom_entry_price * LEVERAGE)) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE * 2)
-            st.session_state.custom_balance += profit
-            st.session_state.custom_position = None
-            st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
-        elif st.session_state.custom_short_count >= 2:
-            profit = (st.session_state.custom_qty * st.session_state.custom_entry_price * ((current_price - st.session_state.custom_entry_price) / st.session_state.custom_entry_price * LEVERAGE)) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE * 2)
-            st.session_state.custom_balance += profit
-            st.session_state.custom_position = 'SHORT'
-            st.session_state.custom_entry_price = current_price
-            st.session_state.custom_qty = (st.session_state.custom_balance * TRADE_RATIO) / current_price * LEVERAGE
-            st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
+        if st.session_state.custom_position == 'LONG':
+            liq_price = st.session_state.custom_entry_price * (1 - 1/LEVERAGE)
+            if current_low <= liq_price:
+                st.session_state.custom_balance -= (st.session_state.custom_entry_price * st.session_state.custom_qty / LEVERAGE)
+                st.session_state.custom_position = None
+                st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
+            else:
+                if st.session_state.custom_neutral_streak >= 10:
+                    profit = (st.session_state.custom_qty * (current_price - st.session_state.custom_entry_price)) - (st.session_state.custom_qty * current_price * FEE_RATE) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE)
+                    st.session_state.custom_balance += profit
+                    st.session_state.custom_position = None
+                    st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
+                elif st.session_state.custom_short_count >= 2:
+                    profit = (st.session_state.custom_qty * (current_price - st.session_state.custom_entry_price)) - (st.session_state.custom_qty * current_price * FEE_RATE) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE)
+                    st.session_state.custom_balance += profit
+                    st.session_state.custom_position = 'SHORT'
+                    st.session_state.custom_entry_price = current_price
+                    st.session_state.custom_qty = (st.session_state.custom_balance * TRADE_RATIO * LEVERAGE) / current_price
+                    st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
 
-    elif st.session_state.custom_position == 'SHORT':
-        if st.session_state.custom_neutral_streak >= 10:
-            profit = (st.session_state.custom_qty * st.session_state.custom_entry_price * ((st.session_state.custom_entry_price - current_price) / st.session_state.custom_entry_price * LEVERAGE)) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE * 2)
-            st.session_state.custom_balance += profit
-            st.session_state.custom_position = None
-            st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
-        elif st.session_state.custom_long_count >= 2:
-            profit = (st.session_state.custom_qty * st.session_state.custom_entry_price * ((st.session_state.custom_entry_price - current_price) / st.session_state.custom_entry_price * LEVERAGE)) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE * 2)
-            st.session_state.custom_balance += profit
-            st.session_state.custom_position = 'LONG'
-            st.session_state.custom_entry_price = current_price
-            st.session_state.custom_qty = (st.session_state.custom_balance * TRADE_RATIO) / current_price * LEVERAGE
-            st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
+        elif st.session_state.custom_position == 'SHORT':
+            liq_price = st.session_state.custom_entry_price * (1 + 1/LEVERAGE)
+            if current_high >= liq_price:
+                st.session_state.custom_balance -= (st.session_state.custom_entry_price * st.session_state.custom_qty / LEVERAGE)
+                st.session_state.custom_position = None
+                st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
+            else:
+                if st.session_state.custom_neutral_streak >= 10:
+                    profit = (st.session_state.custom_qty * (st.session_state.custom_entry_price - current_price)) - (st.session_state.custom_qty * current_price * FEE_RATE) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE)
+                    st.session_state.custom_balance += profit
+                    st.session_state.custom_position = None
+                    st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
+                elif st.session_state.custom_long_count >= 2:
+                    profit = (st.session_state.custom_qty * (st.session_state.custom_entry_price - current_price)) - (st.session_state.custom_qty * current_price * FEE_RATE) - (st.session_state.custom_qty * st.session_state.custom_entry_price * FEE_RATE)
+                    st.session_state.custom_balance += profit
+                    st.session_state.custom_position = 'LONG'
+                    st.session_state.custom_entry_price = current_price
+                    st.session_state.custom_qty = (st.session_state.custom_balance * TRADE_RATIO * LEVERAGE) / current_price
+                    st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
 
-    if st.session_state.custom_position is None:
-        if st.session_state.custom_long_count >= 2:
-            st.session_state.custom_position = 'LONG'
-            st.session_state.custom_entry_price = current_price
-            st.session_state.custom_qty = (st.session_state.custom_balance * TRADE_RATIO) / current_price * LEVERAGE
-            st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
-        elif st.session_state.custom_short_count >= 2:
-            st.session_state.custom_position = 'SHORT'
-            st.session_state.custom_entry_price = current_price
-            st.session_state.custom_qty = (st.session_state.custom_balance * TRADE_RATIO) / current_price * LEVERAGE
-            st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
+        if st.session_state.custom_position is None:
+            if st.session_state.custom_long_count >= 2:
+                st.session_state.custom_position = 'LONG'
+                st.session_state.custom_entry_price = current_price
+                st.session_state.custom_qty = (st.session_state.custom_balance * TRADE_RATIO * LEVERAGE) / current_price
+                st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
+            elif st.session_state.custom_short_count >= 2:
+                st.session_state.custom_position = 'SHORT'
+                st.session_state.custom_entry_price = current_price
+                st.session_state.custom_qty = (st.session_state.custom_balance * TRADE_RATIO * LEVERAGE) / current_price
+                st.session_state.custom_long_count = 0; st.session_state.custom_short_count = 0; st.session_state.custom_neutral_streak = 0
 
     # -----------------------------------------------------
     # 기록 및 시각화
