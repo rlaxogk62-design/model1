@@ -36,9 +36,9 @@ def get_live_macro_data(days=5):
     btc_df = pd.DataFrame(ohlcv, columns=['Datetime', 'Open', 'High', 'Low', 'Close', 'Volume'])
     btc_df['Datetime'] = pd.to_datetime(btc_df['Datetime'], unit='ms')
     btc_df.set_index('Datetime', inplace=True)
-    btc_df.index = btc_df.index.tz_localize('UTC').tz_convert('Asia/Seoul').tz_localize(None)
+    btc_df.index = btc_df.index.tz_localize('UTC').tz_convert('Asia/Seoul').tz_localize(None).astype('datetime64[ns]')
     btc_df.rename(columns={'Close': 'BTC_Close'}, inplace=True)
-    
+
     # 2. 매크로 데이터 수집 (yfinance)
     tickers = {'NASDAQ': 'NQ=F', 'DXY': 'DX-Y.NYB', 'OIL': 'CL=F', 'TREASURY': '^TNX'}
     df_dict = {}
@@ -47,54 +47,54 @@ def get_live_macro_data(days=5):
         if not tmp_df.empty:
             tmp_df = tmp_df[['Close']]
             tmp_df.columns = [f'{name}_Close']
-            tmp_df.index = tmp_df.index.tz_convert('Asia/Seoul').tz_localize(None)
+            tmp_df.index = tmp_df.index.tz_convert('Asia/Seoul').tz_localize(None).astype('datetime64[ns]')
             df_dict[name] = tmp_df
-            
+
     # 3. 데이터 병합
     merged_df = btc_df.copy().sort_index()
     for name in tickers.keys():
         if name in df_dict:
             tmp = df_dict[name].dropna().sort_index()
             merged_df = pd.merge_asof(merged_df, tmp, left_index=True, right_index=True, direction='backward')
-    
+
     merged_df.dropna(inplace=True)
-    
+
     # 4. 피처 엔지니어링
     for name in ['BTC', 'NASDAQ', 'DXY', 'OIL', 'TREASURY']:
         if f'{name}_Close' in merged_df.columns:
             merged_df[f'{name}_Ret_15m'] = merged_df[f'{name}_Close'].pct_change(1)
             merged_df[f'{name}_Ret_1H'] = merged_df[f'{name}_Close'].pct_change(4)
             merged_df[f'{name}_Ret_4H'] = merged_df[f'{name}_Close'].pct_change(16)
-            
+
     # Base_Model_Pred (훈련 시 사용했던 단순화 로직)
     merged_df['Base_Model_Pred'] = np.where(merged_df['BTC_Close'].rolling(7).mean() > merged_df['BTC_Close'].rolling(20).mean(), 2, 0)
-    
+
     # ATR 계산용
     merged_df['Prev_Close'] = merged_df['BTC_Close'].shift(1)
     merged_df['TR'] = np.abs(merged_df['High'] - merged_df['Low'])
     merged_df['ATR_Approx'] = merged_df['TR'].rolling(window=14).mean().fillna(merged_df['BTC_Close'] * 0.003)
-    
+
     merged_df.dropna(inplace=True)
     return merged_df
 
 try:
     # 데이터 로드
     df = get_live_macro_data(days=5)
-    
+
     # 모델 로드 및 추론
     model_path = './data/model/xgboost_macro_15m.pkl'
     if not os.path.exists(model_path):
         model_path = 'xgboost_macro_15m.pkl'
     model_macro = joblib.load(model_path)
-    
-    feature_cols = ['Base_Model_Pred', 'BTC_Ret_15m', 'BTC_Ret_1H', 'BTC_Ret_4H', 
-                    'NASDAQ_Ret_15m', 'NASDAQ_Ret_1H', 'NASDAQ_Ret_4H', 
-                    'DXY_Ret_15m', 'DXY_Ret_1H', 'DXY_Ret_4H', 
-                    'OIL_Ret_15m', 'OIL_Ret_1H', 'OIL_Ret_4H', 
+
+    feature_cols = ['Base_Model_Pred', 'BTC_Ret_15m', 'BTC_Ret_1H', 'BTC_Ret_4H',
+                    'NASDAQ_Ret_15m', 'NASDAQ_Ret_1H', 'NASDAQ_Ret_4H',
+                    'DXY_Ret_15m', 'DXY_Ret_1H', 'DXY_Ret_4H',
+                    'OIL_Ret_15m', 'OIL_Ret_1H', 'OIL_Ret_4H',
                     'TREASURY_Ret_15m', 'TREASURY_Ret_1H', 'TREASURY_Ret_4H']
-    
+
     df['Macro_Pred'] = model_macro.predict(df[feature_cols])
-    
+
     # --- 1. 차트 시각화 ---
     fig = go.Figure(data=[go.Candlestick(x=df.index,
                     open=df['Open'], high=df['High'], low=df['Low'], close=df['BTC_Close'],
@@ -110,30 +110,30 @@ try:
 
     fig.update_layout(title='Live Macro Signals (Last 5 Days)', template='plotly_dark', xaxis_rangeslider_visible=False, height=500)
     st.plotly_chart(fig, use_container_width=True)
-    
+
     # --- 2. 실시간 모의투자 (Paper Trading) 시뮬레이션 ---
     st.markdown("### 💸 Live Paper Trading Simulation (최근 5일 진행형 모의투자)")
-    
+
     # 최적화 파라미터 적용 (이전 Optuna 결과 기반)
     LEVERAGE = 11
     TP_MULT = 5.0
     SL_MULT = 1.0
     TRADE_RATIO = 0.1
     FEE_RATE = 0.0004
-    
+
     balance = 10000.0
     position = None
     entry_price = 0
     qty = 0
-    
+
     history_dates = []
     history_balances = []
-    
+
     for i in range(len(df)):
         row = df.iloc[i]
         current_price = row['BTC_Close']
         atr = row['ATR_Approx']
-        
+
         if position == 'LONG':
             if current_price >= entry_price + (atr * TP_MULT) or current_price <= entry_price - (atr * SL_MULT):
                 profit = (qty * entry_price * ((current_price - entry_price) / entry_price * LEVERAGE)) - (qty * entry_price * FEE_RATE * 2)
@@ -144,7 +144,7 @@ try:
                 profit = (qty * entry_price * ((entry_price - current_price) / entry_price * LEVERAGE)) - (qty * entry_price * FEE_RATE * 2)
                 balance += profit
                 position = None
-                
+
         if position is None:
             if row['Macro_Pred'] == 2:
                 position = 'LONG'
@@ -154,16 +154,16 @@ try:
                 position = 'SHORT'
                 entry_price = current_price
                 qty = (balance * TRADE_RATIO) / entry_price * LEVERAGE
-                
+
         history_dates.append(df.index[i])
         history_balances.append(balance)
-        
+
     col1, col2, col3 = st.columns(3)
     current_roi = (balance - 10000.0) / 10000.0 * 100
     col1.metric("초기 모의 자산", "$10,000.00")
     col2.metric("현재 모의 자산", f"${balance:,.2f}", f"{current_roi:.2f}%")
     col3.metric("현재 포지션 상태", "대기 (None)" if position is None else position)
-    
+
     fig_roi = go.Figure(data=[go.Scatter(x=history_dates, y=history_balances, mode='lines', line=dict(color='gold', width=3))])
     fig_roi.update_layout(title='Mock Trading Equity Curve (Real-time Updated)', template='plotly_dark', height=300)
     st.plotly_chart(fig_roi, use_container_width=True)
